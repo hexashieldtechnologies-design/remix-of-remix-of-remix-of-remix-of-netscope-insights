@@ -29,14 +29,14 @@ import time
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # ---------------------------------------------------------------- WebSocket hub
-def ws_frame(payload: bytes) -> bytes:
+def ws_frame(payload: bytes, op: int = 0x82) -> bytes:
     n = len(payload)
     if n < 126:
-        head = struct.pack("!BB", 0x82, n)          # FIN + binary opcode
+        head = struct.pack("!BB", op, n)            # FIN + opcode (0x82 binary, 0x81 text)
     elif n < 65536:
-        head = struct.pack("!BBH", 0x82, 126, n)
+        head = struct.pack("!BBH", op, 126, n)
     else:
-        head = struct.pack("!BBQ", 0x82, 127, n)
+        head = struct.pack("!BBQ", op, 127, n)
     return head + payload
 
 
@@ -59,19 +59,23 @@ class Hub:
         with self.lock:
             return len(self.clients)
 
-    def broadcast(self, data: bytes):
-        frame = ws_frame(data)
+    def broadcast(self, data: bytes, op: int = 0x82):
+        frame = ws_frame(data, op)
         dead = []
         with self.lock:
             for c in self.clients:
                 try:
                     c.sendall(frame)
-                    self.sent += 1
-                    self.bytes += len(data)
+                    if op == 0x82:
+                        self.sent += 1
+                        self.bytes += len(data)
                 except OSError:
                     dead.append(c)
             for c in dead:
                 self.clients.discard(c)
+
+    def send_text(self, text: str):
+        self.broadcast(text.encode(), 0x81)
 
 
 def handle_client(conn, addr, hub):
