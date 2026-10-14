@@ -220,6 +220,9 @@ def reverse_name(ip):
         return None
 
 
+KNOWN_DEVICES = set()
+
+
 def discovery_loop(hub, interval=15):
     me = local_ip()
     if not me:
@@ -237,6 +240,7 @@ def discovery_loop(hub, interval=15):
         time.sleep(1)
         arp = read_arp()
         found = {ip: mac for ip, mac in arp.items() if ip.startswith(prefix + ".")}
+        KNOWN_DEVICES.update(found)
         with ThreadPoolExecutor(max_workers=16) as ex:
             for ip, n in zip(list(found), ex.map(lambda i: names.get(i) or reverse_name(i), list(found))):
                 if n:
@@ -283,9 +287,26 @@ def stats_loop(hub):
             last = cur
 
 
+PACKET_ADD_MEMBERSHIP = 1
+PACKET_MR_PROMISC = 1
+SOL_PACKET = 263
+
+
+def set_promisc(s, iface):
+    """Put the interface in promiscuous mode so every frame on the link is captured."""
+    try:
+        idx = socket.if_nametoindex(iface)
+        mreq = struct.pack("IHH8s", idx, PACKET_MR_PROMISC, 0, b"\x00" * 8)
+        s.setsockopt(SOL_PACKET, PACKET_ADD_MEMBERSHIP, mreq)
+        print(f"[*] Promiscuous mode enabled on '{iface}' (all devices on the link)")
+    except OSError as e:
+        print(f"[!] Could not enable promiscuous mode on '{iface}': {e}")
+
+
 def capture_afpacket(hub, iface):
     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
     s.bind((iface, 0))
+    set_promisc(s, iface)
     print(f"[*] AF_PACKET capture on '{iface}'")
     while True:
         data = s.recv(65535)
@@ -294,9 +315,21 @@ def capture_afpacket(hub, iface):
 
 
 def capture_scapy(hub, iface):
-    from scapy.all import sniff  # noqa
-    print(f"[*] Scapy capture on '{iface or 'default'}'")
-    sniff(prn=lambda p: hub.broadcast(bytes(p)), iface=iface, store=False)
+    from scapy.all import sniff, conf  # noqa
+    conf.sniff_promisc = 1
+    print(f"[*] Scapy capture on '{iface or 'default'}' (promiscuous)")
+    sniff(prn=lambda p: hub.broadcast(bytes(p)), iface=iface, store=False, promisc=True)
+
+
+def probe_loop(hub, interval=5):
+    """Keep every discovered LAN device producing live packets we can see."""
+    while True:
+        time.sleep(interval)
+        targets = list(KNOWN_DEVICES)
+        if not targets:
+            continue
+        with ThreadPoolExecutor(max_workers=32) as ex:
+            list(ex.map(poke, targets))
 
 
 def demo_frames(n=100000):
@@ -326,6 +359,7 @@ def main():
     threading.Thread(target=stats_loop, args=(hub,), daemon=True).start()
     if not args.no_scan:
         threading.Thread(target=discovery_loop, args=(hub,), daemon=True).start()
+        threading.Thread(target=probe_loop, args=(hub,), daemon=True).start()
 
     try:
         ips = socket.gethostbyname_ex(socket.gethostname())[2]
