@@ -5,6 +5,16 @@ import { Analyzer, decodeFrame, type Packet, type Proto, type Field } from "@/li
 import { annotate, CAT_CLS } from "@/lib/netscope/apps";
 import { parseCapture } from "@/lib/netscope/pcap";
 import { scenario, SIM_DEVICES } from "@/lib/netscope/simulator";
+import { explainPacket } from "@/lib/netscope/explain";
+import agentSource from "../../../public/capture_agent.py?raw";
+
+function downloadAgent() {
+  const url = URL.createObjectURL(new Blob([agentSource], { type: "text/x-python;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = "capture_agent.py";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
 
 const MAX = 20000;
 const PROTO_CLS: Record<Proto, string> = {
@@ -60,6 +70,8 @@ export function NetScope() {
   const [msg, setMsg] = useState<string | null>(null);
   const [agent, setAgent] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const lan = useRef<Map<string, { ip: string; mac?: string; name?: string; gateway?: boolean; self?: boolean }>>(new Map());
+  const [copied, setCopied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const ingest = useCallback((frames: { data: Uint8Array; ts: number; linktype?: number }[]) => {
@@ -104,6 +116,10 @@ export function NetScope() {
       if (e.data instanceof ArrayBuffer) return ingest([{ data: new Uint8Array(e.data), ts: Date.now() }]);
       try {
         const j = JSON.parse(e.data);
+        if (j && j.type === "devices") {
+          for (const d of j.devices) { lan.current.set(d.ip, d); if (d.name) hosts.current.set(d.ip, d.name); }
+          return setVer((v) => v + 1);
+        }
         const arr = Array.isArray(j) ? j : [j];
         ingest(arr.map((m: { hex?: string; base64?: string; ts?: number; linktype?: number }) => ({
           data: m.hex ? new Uint8Array(m.hex.match(/../g)!.map((h) => parseInt(h, 16))) : Uint8Array.from(atob(m.base64 ?? ""), (c) => c.charCodeAt(0)),
@@ -114,7 +130,7 @@ export function NetScope() {
     return () => ws.close();
   }, [state, iface, wsUrl, ingest]);
 
-  const clear = () => { pkts.current = []; analyzer.current = new Analyzer(); nextId.current = 1; setSelId(null); setDevice(null); setVer((v) => v + 1); };
+  const clear = () => { pkts.current = []; lan.current = new Map(); analyzer.current = new Analyzer(); nextId.current = 1; setSelId(null); setDevice(null); setVer((v) => v + 1); };
 
   const onFile = async (f: File) => {
     try {
@@ -145,6 +161,7 @@ export function NetScope() {
         d.peers.add(out ? p.dst : p.src);
       }
     }
+    for (const l of lan.current.values()) { const d = get(l.ip); if (l.mac) d.mac ??= l.mac; d.discovered = true; d.gateway = l.gateway; d.self = l.self; }
     for (const d of m.values()) {
       d.host = hosts.current.get(d.ip);
       d.vendor = d.mac ? OUI[d.mac.slice(0, 8)] ?? "Unknown vendor" : undefined;
@@ -222,7 +239,7 @@ export function NetScope() {
             <ol className="mt-3 space-y-3 text-sm">
               <li>
                 <p className="font-medium">1. Download the script</p>
-                <a href="/capture_agent.py" download className="mt-1 inline-flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"><Terminal className="size-3" /> Download capture_agent.py</a>
+                <div className="mt-1 flex flex-wrap gap-2"><button onClick={downloadAgent} className="inline-flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"><Terminal className="size-3" /> Download capture_agent.py</button><button onClick={async () => { await navigator.clipboard.writeText(agentSource); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="rounded border border-border px-3 py-1.5 text-xs">{copied ? "Copied!" : "Copy script"}</button></div>
               </li>
               <li>
                 <p className="font-medium">2. Run it in a terminal (admin rights needed to see traffic)</p>
@@ -235,7 +252,8 @@ export function NetScope() {
                 <p className="mt-1 text-xs text-muted-foreground">Pick <span className="font-mono">ws0 — Live capture (agent)</span> above and press Start. On this PC the app connects to <span className="font-mono">ws://localhost:9000</span>; from a phone on the same Wi-Fi use the LAN address the script prints (e.g. <span className="font-mono">ws://192.168.1.5:9000</span>).</p>
               </li>
             </ol>
-            <p className="mt-3 text-xs text-muted-foreground">Tip: HTTPS hides page paths and contents — you still see every site your devices contact, plus ports, protocols and sizes.</p>
+            <p className="mt-3 text-xs text-muted-foreground">The agent also scans your Wi-Fi and lists every connected device (phones, TVs, router). Your laptop can only see the full traffic of other devices if the router mirrors it; otherwise you see their presence plus broadcast traffic.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Tip: HTTPS hides page paths and contents — you still see every site your devices contact, plus ports, protocols and sizes.</p>
           </div>
         </div>
       )}
@@ -250,13 +268,15 @@ export function NetScope() {
             {devices.length === 0 && <p className="px-2 py-4 text-sm text-muted-foreground">Press Start to run the live simulator, or open a PCAP file.</p>}
             {devices.map((d) => {
               const Icon = deviceIcon(d);
-              const active = latest - d.last < 10000;
+              const active = d.discovered || latest - d.last < 10000;
               return (
                 <button key={d.ip} onClick={() => setDevice(device === d.ip ? null : d.ip)}
                   className={`w-60 shrink-0 rounded-md border p-2.5 text-left transition-colors lg:w-full ${device === d.ip ? "border-primary bg-accent" : "border-border bg-card hover:border-ring/50"}`}>
                   <div className="flex items-center gap-2">
                     <Icon className="size-4 text-primary" />
                     <span className="truncate text-sm font-medium">{d.host ?? d.ip}</span>
+                    {d.gateway && <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">router</span>}
+                    {d.self && <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">you</span>}
                     <span className={`ml-auto size-2 rounded-full ${active ? "bg-primary" : "bg-muted-foreground/40"}`} title={active ? "Active" : "Idle"} />
                   </div>
                   <div className="mt-1 font-mono text-[11px] text-muted-foreground">{d.ip}{d.mac && ` · ${d.mac}`}</div>
@@ -299,6 +319,7 @@ export function NetScope() {
             <div className="grid max-h-[45%] min-h-48 shrink-0 grid-cols-1 border-t border-border md:grid-cols-2">
               <ProtoTree p={sel} onField={(f) => setHl(f.r ?? null)} hl={hl} />
               <HexView bytes={sel.bytes} hl={hl} />
+              <Explain p={sel} host={(ip) => hosts.current.get(ip)} />
             </div>
           )}
         </main>
@@ -498,6 +519,23 @@ function AppsView({ rows, app, setApp, hostOf, t0, onSel }: { rows: Packet[]; ap
         </tbody>
       </table>
       <p className="p-2 text-center text-[11px] text-muted-foreground">Full paths are visible only for unencrypted HTTP. For HTTPS and QUIC, the address bar path is encrypted — only the site name is shown.</p>
+    </div>
+  );
+}
+
+function Explain({ p, host }: { p: Packet; host: (ip: string) => string | undefined }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [p.id]);
+  const r = open ? explainPacket(p, host) : null;
+  return (
+    <div className="border-t border-border p-2 text-xs md:col-span-2">
+      {!r ? <button onClick={() => setOpen(true)} className="rounded bg-primary px-3 py-1.5 font-medium text-primary-foreground">Analyze this packet</button> : (
+        <div className="space-y-1">
+          <p className="font-medium">{r.summary}</p>
+          {r.points.map((x, i) => <p key={i} className="text-muted-foreground">• {x}</p>)}
+          {r.warnings.map((x, i) => <p key={i} className="text-warning">⚠ {x}</p>)}
+        </div>
+      )}
     </div>
   );
 }
