@@ -53,7 +53,8 @@ export function NetScope() {
   const [device, setDevice] = useState<string | null>(null);
   const [selId, setSelId] = useState<number | null>(null);
   const [hl, setHl] = useState<[number, number] | null>(null);
-  const [tab, setTab] = useState<"packets" | "flows" | "dns" | "tls" | "http">("packets");
+  const [tab, setTab] = useState<"activity" | "packets" | "flows" | "dns" | "tls" | "http">("activity");
+  const [appSel, setAppSel] = useState<string | null>(null);
   const [wsUrl, setWsUrl] = useState("ws://localhost:9000/capture");
   const [wsStatus, setWsStatus] = useState("disconnected");
   const [msg, setMsg] = useState<string | null>(null);
@@ -65,6 +66,7 @@ export function NetScope() {
       const p = analyzer.current.apply(decodeFrame(f.data, f.ts, nextId.current++, f.linktype ?? 1));
       if (p.dns?.response) p.dns.answers.forEach((a) => { const ip = a.split(" ")[1]; if (ip) hosts.current.set(ip, p.dns!.name); });
       if (p.tls?.sni) hosts.current.set(p.dst, p.tls.sni);
+      annotate(p, (ip) => (isPrivate(ip) ? undefined : hosts.current.get(ip)));
       pkts.current.push(p);
     }
     if (pkts.current.length > MAX) pkts.current.splice(0, pkts.current.length - MAX);
@@ -251,16 +253,17 @@ export function NetScope() {
             {stats.retrans > 0 && <span className="font-mono text-warning">retrans {stats.retrans}</span>}
           </div>
           <nav className="flex gap-1 overflow-x-auto border-b border-border px-2">
-            {(["packets", "flows", "dns", "tls", "http"] as const).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`border-b-2 px-3 py-2 text-xs font-medium uppercase tracking-wide ${tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>{t}</button>
+            {(["activity", "packets", "flows", "dns", "tls", "http"] as const).map((t) => (
+              <button key={t} onClick={() => setTab(t)} className={`border-b-2 px-3 py-2 text-xs font-medium uppercase tracking-wide ${tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>{t === "activity" ? "Apps & activity" : t}</button>
             ))}
           </nav>
           <div className="min-h-0 flex-1 overflow-auto">
+            {tab === "activity" && <AppsView rows={view} app={appSel} setApp={setAppSel} hostOf={(ip) => hosts.current.get(ip) ?? ip} t0={all[0]?.ts ?? 0} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
             {tab === "packets" && <PacketTable rows={view} selId={selId} onSel={(id) => { setSelId(id); setHl(null); }} t0={all[0]?.ts ?? 0} />}
             {tab === "flows" && <Flows rows={view} />}
-            {tab === "dns" && <Insight rows={view.filter((p) => p.dns)} cols={["Name", "Type", "Kind", "Answers", "Latency"]} cell={(p) => [p.dns!.name, p.dns!.qtype, p.dns!.response ? "response" : "query", p.dns!.answers.join(", "), p.dns!.latencyMs != null ? `${p.dns!.latencyMs.toFixed(1)} ms` : ""]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
-            {tab === "tls" && <Insight rows={view.filter((p) => p.tls && p.tls.type !== "Application Data")} cols={["Message", "SNI / CN", "Version", "Cipher", "Server"]} cell={(p) => [p.tls!.type, p.tls!.sni ?? p.tls!.cert ?? hosts.current.get(p.src) ?? "", p.tls!.version ?? "", p.tls!.cipher ?? (p.tls!.ciphers ? `${p.tls!.ciphers.length} offered` : ""), p.tls!.type === "ClientHello" ? p.dst : p.src]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
-            {tab === "http" && <Insight rows={view.filter((p) => p.http)} cols={["Method / Status", "Host", "Path", "Content-Type", "Version"]} cell={(p) => [p.http!.method ?? String(p.http!.status ?? ""), p.http!.host ?? p.src, p.http!.path ?? "", p.http!.contentType ?? "", p.http!.version]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
+            {tab === "dns" && <Insight rows={view.filter((p) => p.dns)} cols={["App", "Name", "Type", "Kind", "Answers", "Latency"]} cell={(p) => [p.app ?? "", p.dns!.name, p.dns!.qtype, p.dns!.response ? "response" : "query", p.dns!.answers.join(", "), p.dns!.latencyMs != null ? `${p.dns!.latencyMs.toFixed(1)} ms` : ""]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
+            {tab === "tls" && <Insight rows={view.filter((p) => p.tls && p.tls.type !== "Application Data")} cols={["App", "Message", "SNI / CN", "Version", "Cipher", "Server"]} cell={(p) => [p.app ?? "", p.tls!.type, p.tls!.sni ?? p.tls!.cert ?? hosts.current.get(p.src) ?? "", p.tls!.version ?? "", p.tls!.cipher ?? (p.tls!.ciphers ? `${p.tls!.ciphers.length} offered` : ""), p.tls!.type === "ClientHello" ? p.dst : p.src]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
+            {tab === "http" && <Insight rows={view.filter((p) => p.http)} cols={["App", "Method / Status", "Full URL", "Content-Type", "Version"]} cell={(p) => [p.app ?? "", p.http!.method ?? String(p.http!.status ?? ""), p.url ?? p.http!.host ?? p.src, p.http!.contentType ?? "", p.http!.version]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
           </div>
           {sel && tab === "packets" && (
             <div className="grid max-h-[45%] min-h-48 shrink-0 grid-cols-1 border-t border-border md:grid-cols-2">
@@ -290,7 +293,7 @@ function PacketTable({ rows, selId, onSel, t0 }: { rows: Packet[]; selId: number
     <div ref={ref}>
       <table className="w-full font-mono text-[11px]">
         <thead className="sticky top-0 bg-card text-left text-muted-foreground">
-          <tr>{["No.", "Time", "Source", "Destination", "Proto", "Len", "Info"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">{h}</th>)}</tr>
+          <tr>{["No.", "Time", "Source", "Destination", "Proto", "App", "Len", "Info"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">{h}</th>)}</tr>
         </thead>
         <tbody>
           {shown.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground"><Activity className="mx-auto mb-2 size-5" />No packets match.</td></tr>}
@@ -301,6 +304,7 @@ function PacketTable({ rows, selId, onSel, t0 }: { rows: Packet[]; selId: number
               <td className="px-2 py-1 whitespace-nowrap">{p.src}{p.srcPort != null && <span className="text-muted-foreground">:{p.srcPort}</span>}</td>
               <td className="px-2 py-1 whitespace-nowrap">{p.dst}{p.dstPort != null && <span className="text-muted-foreground">:{p.dstPort}</span>}</td>
               <td className={`px-2 py-1 font-medium ${PROTO_CLS[p.proto]}`}>{p.proto}</td>
+              <td className={`whitespace-nowrap px-2 py-1 ${CAT_CLS[p.appCat ?? "Other"]}`}>{p.app}</td>
               <td className="px-2 py-1">{p.length}</td>
               <td className={`max-w-[28rem] truncate px-2 py-1 ${p.retrans ? "text-warning" : ""}`}>{p.info}</td>
             </tr>
