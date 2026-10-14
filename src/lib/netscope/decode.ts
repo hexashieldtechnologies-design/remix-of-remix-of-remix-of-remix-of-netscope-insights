@@ -33,7 +33,13 @@ export interface Packet {
   retrans?: boolean;
   dns?: { id: number; response: boolean; name: string; qtype: string; answers: string[]; latencyMs?: number };
   tls?: { type: string; sni?: string; version?: string; ciphers?: string[]; cipher?: string; cert?: string };
-  http?: { method?: string; path?: string; host?: string; status?: number; contentType?: string; version: string };
+  http?: { method?: string; path?: string; host?: string; status?: number; contentType?: string; version: string; ua?: string };
+  /** filled by annotate() in apps.ts */
+  app?: string;
+  appCat?: string;
+  domain?: string;
+  url?: string;
+  action?: string;
 }
 
 const hex2 = (n: number) => n.toString(16).padStart(2, "0");
@@ -213,7 +219,7 @@ function decodeHTTP(b: Uint8Array, o: number, p: Packet): boolean {
   const hv = (n: string) => headers.find((h) => h.toLowerCase().startsWith(n + ":"))?.slice(n.length + 1).trim();
   p.proto = "HTTP";
   p.http = m
-    ? { method: m[1], path: m[2], version: m[3], host: hv("host") }
+    ? { method: m[1], path: m[2], version: m[3], host: hv("host"), ua: hv("user-agent") }
     : { status: +s![2], version: s![1], contentType: hv("content-type") };
   p.info = m ? `${m[1]} ${m[2]}${p.http.host ? ` (${p.http.host})` : ""}` : `${s![2]} ${s![3]}${p.http.contentType ? ` · ${p.http.contentType}` : ""}`;
   p.layers.push({
