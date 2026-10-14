@@ -409,7 +409,7 @@ function AppsView({ rows, app, setApp, hostOf, t0, onSel }: { rows: Packet[]; ap
       let a = m.get(p.app);
       if (!a) m.set(p.app, (a = { name: p.app, cat: p.appCat ?? "Other", pkts: 0, bytes: 0, first: p.ts, last: p.ts, devices: new Set(), domains: new Map(), urls: new Set(), udp: 0 }));
       a.pkts++; a.bytes += p.length; a.last = p.ts;
-      const local = isPrivate(p.src) ? p.src : p.dst;
+      const local = isPrivate(p.src) && p.src !== "192.168.1.1" ? p.src : p.dst;
       if (isPrivate(local) && local !== "192.168.1.1") a.devices.add(local);
       if (p.domain && !/^\d/.test(p.domain)) a.domains.set(p.domain, (a.domains.get(p.domain) ?? 0) + 1);
       if (p.http?.method && p.url) a.urls.add(p.url);
@@ -453,7 +453,7 @@ function AppsView({ rows, app, setApp, hostOf, t0, onSel }: { rows: Packet[]; ap
         <thead className="sticky top-0 bg-card text-left text-muted-foreground"><tr>{["Time", "Device", "Type", "Full URL / domain", "What happened", "Len"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">{h}</th>)}</tr></thead>
         <tbody>
           {reqs.slice(-500).reverse().map((p) => {
-            const local = isPrivate(p.src) ? p.src : p.dst;
+            const local = isPrivate(p.src) && p.src !== "192.168.1.1" ? p.src : p.dst;
             return (
               <tr key={p.id} onClick={() => onSel(p.id)} className="cursor-pointer border-b border-border/40 hover:bg-muted">
                 <td className="whitespace-nowrap px-2 py-1">{((p.ts - t0) / 1000).toFixed(2)}s</td>
