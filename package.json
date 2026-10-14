@@ -11,7 +11,10 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "electron:dev": "electron .",
+    "electron:package:win": "npx @electron/packager . NetScope --platform=win32 --arch=x64 --out=electron-release --overwrite --icon=public/icon-512.png --ignore=^/src --ignore=^/node_modules --ignore=^/electron-release",
+    "electron:installer:win": "npx electron-builder --win nsis"
   },
   "overrides": {
     "rolldown": "1.2.1"
@@ -92,5 +95,19 @@
     "typescript-eslint": "^8.56.1",
     "vite": "8.1.5",
     "vitest": "^4.1.10"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "app.netscope",
+    "productName": "NetScope",
+    "files": [
+      "electron/**",
+      "public/icon-512.png",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon-512.png"
+    }
   }
 }
