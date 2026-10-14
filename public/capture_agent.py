@@ -29,14 +29,14 @@ import time
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # ---------------------------------------------------------------- WebSocket hub
-def ws_frame(payload: bytes) -> bytes:
+def ws_frame(payload: bytes, op: int = 0x82) -> bytes:
     n = len(payload)
     if n < 126:
-        head = struct.pack("!BB", 0x82, n)          # FIN + binary opcode
+        head = struct.pack("!BB", op, n)            # FIN + opcode (0x82 binary, 0x81 text)
     elif n < 65536:
-        head = struct.pack("!BBH", 0x82, 126, n)
+        head = struct.pack("!BBH", op, 126, n)
     else:
-        head = struct.pack("!BBQ", 0x82, 127, n)
+        head = struct.pack("!BBQ", op, 127, n)
     return head + payload
 
 
@@ -59,19 +59,23 @@ class Hub:
         with self.lock:
             return len(self.clients)
 
-    def broadcast(self, data: bytes):
-        frame = ws_frame(data)
+    def broadcast(self, data: bytes, op: int = 0x82):
+        frame = ws_frame(data, op)
         dead = []
         with self.lock:
             for c in self.clients:
                 try:
                     c.sendall(frame)
-                    self.sent += 1
-                    self.bytes += len(data)
+                    if op == 0x82:
+                        self.sent += 1
+                        self.bytes += len(data)
                 except OSError:
                     dead.append(c)
             for c in dead:
                 self.clients.discard(c)
+
+    def send_text(self, text: str):
+        self.broadcast(text.encode(), 0x81)
 
 
 def handle_client(conn, addr, hub):
@@ -120,6 +124,131 @@ def ws_server(port, hub):
     while True:
         conn, addr = srv.accept()
         threading.Thread(target=handle_client, args=(conn, addr, hub), daemon=True).start()
+
+
+# ---------------------------------------------------------------- Wi-Fi / LAN device discovery
+import json
+import re
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+
+
+def local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))       # no packet is sent; just picks the Wi-Fi/LAN route
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def gateway_ip():
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/net/route") as f:
+                for line in f.read().splitlines()[1:]:
+                    p = line.split()
+                    if len(p) > 2 and p[1] == "00000000":
+                        return socket.inet_ntoa(struct.pack("<L", int(p[2], 16)))
+        except OSError:
+            pass
+    try:
+        cmd = ["route", "print", "0.0.0.0"] if sys.platform == "win32" else ["netstat", "-rn"]
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+        for line in out.splitlines():
+            p = line.split()
+            if len(p) >= 3 and p[0] in ("0.0.0.0", "default") and re.match(r"\d+\.\d+\.\d+\.\d+$", p[2 if p[0] == "0.0.0.0" else 1]):
+                return p[2 if p[0] == "0.0.0.0" else 1]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def poke(ip):
+    """Send a tiny UDP packet so the OS resolves the device's MAC via ARP (no root needed)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.2)
+        s.sendto(b"\x00", (ip, 9))
+        s.close()
+    except OSError:
+        pass
+    # mDNS/NetBIOS-friendly TCP touch on a common port also wakes sleeping phones
+    try:
+        c = socket.create_connection((ip, 80), timeout=0.3)
+        c.close()
+    except OSError:
+        pass
+
+
+MAC_RE = re.compile(r"([0-9a-fA-F]{1,2}[:-]){5}[0-9a-fA-F]{1,2}")
+IP_RE = re.compile(r"\d+\.\d+\.\d+\.\d+")
+
+
+def read_arp():
+    """Return {ip: mac} from the OS neighbour table."""
+    table = {}
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/net/arp") as f:
+                for line in f.read().splitlines()[1:]:
+                    p = line.split()
+                    if len(p) >= 4 and p[3] != "00:00:00:00:00:00":
+                        table[p[0]] = p[3].lower()
+            return table
+        except OSError:
+            pass
+    try:
+        out = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return table
+    for line in out.splitlines():
+        ip, mac = IP_RE.search(line), MAC_RE.search(line)
+        if ip and mac:
+            m = ":".join(x.zfill(2) for x in re.split(r"[:-]", mac.group(0))).lower()
+            if m not in ("ff:ff:ff:ff:ff:ff",) and not m.startswith("01:00:5e"):
+                table[ip.group(0)] = m
+    return table
+
+
+def reverse_name(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except OSError:
+        return None
+
+
+def discovery_loop(hub, interval=15):
+    me = local_ip()
+    if not me:
+        print("[!] Wi-Fi discovery: could not find this laptop's LAN address")
+        return
+    gw = gateway_ip()
+    prefix = me.rsplit(".", 1)[0]
+    targets = [f"{prefix}.{i}" for i in range(1, 255) if f"{prefix}.{i}" != me]
+    names = {}
+    print(f"[*] Wi-Fi discovery: scanning {prefix}.0/24 (this laptop {me}, router {gw or '?'})")
+    first = True
+    while True:
+        with ThreadPoolExecutor(max_workers=64) as ex:
+            list(ex.map(poke, targets))
+        time.sleep(1)
+        arp = read_arp()
+        found = {ip: mac for ip, mac in arp.items() if ip.startswith(prefix + ".")}
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            for ip, n in zip(list(found), ex.map(lambda i: names.get(i) or reverse_name(i), list(found))):
+                if n:
+                    names[ip] = n
+        devices = [{"ip": me, "mac": None, "name": socket.gethostname() + " (this laptop)", "self": True}]
+        for ip, mac in sorted(found.items(), key=lambda kv: int(kv[0].rsplit(".", 1)[1])):
+            devices.append({"ip": ip, "mac": mac, "name": names.get(ip) or ("Router" if ip == gw else None), "gateway": ip == gw})
+        hub.send_text(json.dumps({"type": "devices", "subnet": prefix + ".0/24", "gateway": gw, "self": me, "devices": devices}))
+        if first or hub.count():
+            print(f"[*] Wi-Fi discovery: {len(devices)} device(s) on the network")
+        first = False
+        time.sleep(interval)
 
 
 # ---------------------------------------------------------------- capture
@@ -189,11 +318,14 @@ def main():
     ap.add_argument("--iface", default=None, help="interface to capture on (default: auto-detect)")
     ap.add_argument("--scapy", action="store_true", help="force the Scapy capture backend")
     ap.add_argument("--test", action="store_true", help="send demo frames instead of capturing")
+    ap.add_argument("--no-scan", action="store_true", help="disable Wi-Fi device discovery")
     args = ap.parse_args()
 
     hub = Hub()
     threading.Thread(target=ws_server, args=(args.port, hub), daemon=True).start()
     threading.Thread(target=stats_loop, args=(hub,), daemon=True).start()
+    if not args.no_scan:
+        threading.Thread(target=discovery_loop, args=(hub,), daemon=True).start()
 
     try:
         ips = socket.gethostbyname_ex(socket.gethostname())[2]
