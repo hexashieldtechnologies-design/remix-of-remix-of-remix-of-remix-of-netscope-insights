@@ -1,6 +1,6 @@
 // @ts-nocheck -- byte-level parsing code; strict index checks would add noise without safety gains
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, FileUp, Pause, Play, Plug, Radio, Square, Trash2, X, Search, Smartphone, Laptop, Router, Cpu, Tv, Server, Globe, ChevronLeft } from "lucide-react";
+import { Activity, FileUp, Pause, Play, Plug, Radio, Square, Trash2, X, Search, Smartphone, Laptop, Router, Cpu, Tv, Server, Globe, ChevronLeft, Terminal } from "lucide-react";
 import { Analyzer, decodeFrame, type Packet, type Proto, type Field } from "@/lib/netscope/decode";
 import { annotate, CAT_CLS } from "@/lib/netscope/apps";
 import { parseCapture } from "@/lib/netscope/pcap";
@@ -14,7 +14,7 @@ const PROTO_CLS: Record<Proto, string> = {
 const OUI: Record<string, string> = { "3c:22:fb": "Apple", "a4:83:e7": "Apple", "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "00:1a:11": "Google", "f4:f2:6d": "TP-Link", "50:02:91": "Espressif", "24:0a:c4": "Espressif", "d8:bb:c1": "Micro-Star", "00:50:56": "VMware", "08:00:27": "VirtualBox", "00:0c:29": "VMware" };
 const isPrivate = (ip: string) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fe80|fd)/.test(ip);
 const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`);
-const IFACES = ["sim0 — Live simulator", "ws0 — WebSocket stream", "file — PCAP import"];
+const IFACES = ["sim0 — Live simulator", "ws0 — Live capture (agent)", "file — PCAP import"];
 
 interface Device { ip: string; mac?: string; host?: string; vendor?: string; pkts: number; bytesIn: number; bytesOut: number; protos: Set<Proto>; last: number; peers: Set<string> }
 
@@ -58,6 +58,7 @@ export function NetScope() {
   const [wsUrl, setWsUrl] = useState("ws://localhost:9000/capture");
   const [wsStatus, setWsStatus] = useState("disconnected");
   const [msg, setMsg] = useState<string | null>(null);
+  const [agent, setAgent] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -184,6 +185,7 @@ export function NetScope() {
           <ToolBtn label="Stop" onClick={() => setState("stopped")} disabled={state === "stopped"}><Square className="size-4" /></ToolBtn>
           <ToolBtn label="Clear" onClick={clear}><Trash2 className="size-4" /></ToolBtn>
           <ToolBtn label="Open PCAP" onClick={() => fileRef.current?.click()}><FileUp className="size-4" /></ToolBtn>
+          <ToolBtn label="Get agent" onClick={() => setAgent(true)}><Terminal className="size-4" /></ToolBtn>
           <input ref={fileRef} type="file" accept=".pcap,.pcapng,.cap" hidden onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
         </div>
         {iface.startsWith("ws") && (
@@ -209,6 +211,34 @@ export function NetScope() {
       </div>
       {msg && <div className="flex items-center justify-between bg-accent px-3 py-1 text-xs">{msg}<button onClick={() => setMsg(null)} aria-label="Dismiss"><X className="size-3" /></button></div>}
 
+      {agent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setAgent(false)}>
+          <div className="max-h-[85dvh] w-full max-w-lg overflow-auto rounded-lg border border-border bg-card p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <Terminal className="size-5 text-primary" />
+              <h2 className="text-base font-semibold">Live capture agent</h2>
+              <button className="ml-auto text-muted-foreground hover:text-foreground" onClick={() => setAgent(false)} aria-label="Close"><X className="size-4" /></button>
+            </div>
+            <ol className="mt-3 space-y-3 text-sm">
+              <li>
+                <p className="font-medium">1. Download the script</p>
+                <a href="/capture_agent.py" download className="mt-1 inline-flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"><Terminal className="size-3" /> Download capture_agent.py</a>
+              </li>
+              <li>
+                <p className="font-medium">2. Run it in a terminal (admin rights needed to see traffic)</p>
+                <pre className="mt-1 overflow-x-auto rounded bg-background p-2 font-mono text-xs">sudo python3 capture_agent.py{'\n'}python capture_agent.py{'\n'}python capture_agent.py --test</pre>
+                <p className="mt-1 text-xs text-muted-foreground">Linux / macOS · Windows (Run as Administrator) · test mode without admin</p>
+                <p className="mt-1 text-xs text-muted-foreground">Linux needs no installs. macOS / Windows: <span className="font-mono">pip install scapy</span> (Windows also needs Npcap).</p>
+              </li>
+              <li>
+                <p className="font-medium">3. Connect from NetScope</p>
+                <p className="mt-1 text-xs text-muted-foreground">Pick <span className="font-mono">ws0 — Live capture (agent)</span> above and press Start. On this PC the app connects to <span className="font-mono">ws://localhost:9000</span>; from a phone on the same Wi-Fi use the LAN address the script prints (e.g. <span className="font-mono">ws://192.168.1.5:9000</span>).</p>
+              </li>
+            </ol>
+            <p className="mt-3 text-xs text-muted-foreground">Tip: HTTPS hides page paths and contents — you still see every site your devices contact, plus ports, protocols and sizes.</p>
+          </div>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Devices */}
         <aside className="shrink-0 border-b border-border bg-sidebar lg:w-72 lg:border-b-0 lg:border-r">
