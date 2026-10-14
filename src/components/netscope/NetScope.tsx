@@ -1,7 +1,8 @@
 // @ts-nocheck -- byte-level parsing code; strict index checks would add noise without safety gains
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, FileUp, Pause, Play, Plug, Radio, Square, Trash2, X, Search, Smartphone, Laptop, Router, Cpu, Tv, Server } from "lucide-react";
+import { Activity, FileUp, Pause, Play, Plug, Radio, Square, Trash2, X, Search, Smartphone, Laptop, Router, Cpu, Tv, Server, Globe, ChevronLeft } from "lucide-react";
 import { Analyzer, decodeFrame, type Packet, type Proto, type Field } from "@/lib/netscope/decode";
+import { annotate, CAT_CLS } from "@/lib/netscope/apps";
 import { parseCapture } from "@/lib/netscope/pcap";
 import { scenario, SIM_DEVICES } from "@/lib/netscope/simulator";
 
