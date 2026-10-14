@@ -291,7 +291,7 @@ export function NetScope() {
             <ol className="mt-3 space-y-3 text-sm">
               <li>
                 <p className="font-medium">1. Download the script</p>
-                <div className="mt-1 flex flex-wrap gap-2"><button onClick={downloadAgent} className="inline-flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"><Terminal className="size-3" /> Download capture_agent.py</button><button onClick={async () => { await navigator.clipboard.writeText(agentSource); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="rounded border border-border px-3 py-1.5 text-xs">{copied ? "Copied!" : "Copy script"}</button></div>
+                <div className="mt-1 flex flex-wrap gap-2"><button onClick={downloadAgent} className="inline-flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"><Terminal className="size-3" /> Download capture_agent.py</button><button onClick={async () => { await navigator.clipboard.writeText(agentScript()); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="rounded border border-border px-3 py-1.5 text-xs">{copied ? "Copied!" : "Copy script"}</button></div>
               </li>
               <li>
                 <p className="font-medium">2. Run it in a terminal (admin rights needed to see traffic)</p>
@@ -302,6 +302,12 @@ export function NetScope() {
               <li>
                 <p className="font-medium">3. Connect from NetScope</p>
                 <p className="mt-1 text-xs text-muted-foreground">Pick <span className="font-mono">ws0 — Live capture (agent)</span> above and press Start. On this PC the app connects to <span className="font-mono">ws://localhost:9000</span>; from a phone on the same Wi-Fi use the LAN address the script prints (e.g. <span className="font-mono">ws://192.168.1.5:9000</span>).</p>
+              </li>
+              <li className="rounded border border-primary/40 bg-background p-3">
+                <p className="font-medium">Remote session — friend in another city</p>
+                <p className="mt-1 text-xs text-muted-foreground">Send them the downloaded script. They run this one command; their packets and Wi-Fi devices stream here over the internet (no router setup). Pick <span className="font-mono">relay — Remote session</span> above and press Start.</p>
+                <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 font-mono text-xs">{remoteCmd}</pre>
+                <p className="mt-1 text-xs text-muted-foreground">Keep the code private — anyone with it can watch the stream. Works once the app is published.</p>
               </li>
             </ol>
             <div className="mt-4 rounded border border-border bg-background p-3">
