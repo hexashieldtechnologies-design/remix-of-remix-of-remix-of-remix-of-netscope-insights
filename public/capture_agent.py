@@ -174,7 +174,7 @@ def demo_frames(n=100000):
     """Synthetic Ethernet/IP/UDP/DNS query frames for --test (no root needed)."""
     out = []
     for i in range(n):
-        q = b"\x0dnetscope-test\x03com\x00" + b"\x00\x01\x00\x01"
+        q = struct.pack("!HHHHHH", i & 0xFFFF, 0x0100, 1, 0, 0, 0) + b"\x0dnetscope-test\x03com\x00" + b"\x00\x01\x00\x01"
         udp = struct.pack("!HHHH", 50000 + (i % 1000), 53, 8 + len(q), 0) + q
         ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(udp), i, 0x4000, 64, 17, 0,
                          socket.inet_aton("192.168.1.14"), socket.inet_aton("8.8.8.8"))
