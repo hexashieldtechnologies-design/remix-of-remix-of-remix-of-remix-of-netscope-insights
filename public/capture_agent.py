@@ -220,6 +220,9 @@ def reverse_name(ip):
         return None
 
 
+KNOWN_DEVICES = set()
+
+
 def discovery_loop(hub, interval=15):
     me = local_ip()
     if not me:
