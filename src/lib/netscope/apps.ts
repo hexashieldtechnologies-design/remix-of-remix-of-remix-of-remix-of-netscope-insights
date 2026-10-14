@@ -15,7 +15,10 @@ const SERVICES: [RegExp, string, string][] = [
   [/(^|\.)(steamcommunity\.com|steampowered\.com|steamcontent\.com)$/, "Steam", "Gaming"],
   [/(^|\.)(icloud\.com|apple\.com|mzstatic\.com)$/, "Apple services", "System"],
   [/(^|\.)(windowsupdate\.com|microsoft\.com|msftconnecttest\.com)$/, "Windows Update", "System"],
+  [/(^|\.)(bing\.com|msedge\.net)$/, "Microsoft Edge", "Browser"],
+  [/(^|\.)(visualstudio\.com|vscode-cdn\.net)$/, "VS Code", "Developer"],
   [/(^|\.)(gstatic\.com|googleapis\.com|google\.com|doubleclick\.net)$/, "Google Chrome", "Browser"],
+  [/(^|\.)(wikipedia\.org|example\.com|example\.org|neverssl\.com)$/, "Web browsing", "Browser"],
   [/(^|\.)(jsdelivr\.net|cloudflare\.com|akamaized\.net|fastly\.net)$/, "Web content (CDN)", "Browser"],
   [/(^|\.)(thermo\.io|tuya\.com|shelly\.cloud)$/, "Smart home device", "IoT"],
 ];
