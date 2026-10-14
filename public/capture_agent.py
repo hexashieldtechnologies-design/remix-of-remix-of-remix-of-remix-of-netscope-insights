@@ -401,9 +401,13 @@ def main():
     ap.add_argument("--scapy", action="store_true", help="force the Scapy capture backend")
     ap.add_argument("--test", action="store_true", help="send demo frames instead of capturing")
     ap.add_argument("--no-scan", action="store_true", help="disable Wi-Fi device discovery")
+    ap.add_argument("--room", default=None, help="remote session code shown in NetScope (stream over the internet)")
+    ap.add_argument("--server", default=DEFAULT_SERVER, help="NetScope app URL for remote sessions")
     args = ap.parse_args()
 
     hub = Hub()
+    if args.room:
+        hub.remote = Remote(args.server, args.room.strip().upper())
     threading.Thread(target=ws_server, args=(args.port, hub), daemon=True).start()
     threading.Thread(target=stats_loop, args=(hub,), daemon=True).start()
     if not args.no_scan:
@@ -418,6 +422,10 @@ def main():
 
     print("=" * 64)
     print("  NetScope Capture Agent")
+    if args.room:
+        print(f"  REMOTE session:         {args.room.strip().upper()}")
+        print(f"  Streaming to:           {args.server}")
+        print("  The NetScope window with this code will start showing packets.")
     print(f"  URL for this PC:        ws://localhost:{args.port}")
     print(f"  URL for phones on LAN:  ws://{lan}:{args.port}")
     print("  In NetScope: pick 'ws0 — Live capture (agent)' -> Start")
