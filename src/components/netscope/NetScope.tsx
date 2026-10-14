@@ -1,7 +1,8 @@
 // @ts-nocheck -- byte-level parsing code; strict index checks would add noise without safety gains
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, FileUp, Pause, Play, Plug, Radio, Square, Trash2, X, Search, Smartphone, Laptop, Router, Cpu, Tv, Server } from "lucide-react";
+import { Activity, FileUp, Pause, Play, Plug, Radio, Square, Trash2, X, Search, Smartphone, Laptop, Router, Cpu, Tv, Server, Globe, ChevronLeft } from "lucide-react";
 import { Analyzer, decodeFrame, type Packet, type Proto, type Field } from "@/lib/netscope/decode";
+import { annotate, CAT_CLS } from "@/lib/netscope/apps";
 import { parseCapture } from "@/lib/netscope/pcap";
 import { scenario, SIM_DEVICES } from "@/lib/netscope/simulator";
 
@@ -52,7 +53,8 @@ export function NetScope() {
   const [device, setDevice] = useState<string | null>(null);
   const [selId, setSelId] = useState<number | null>(null);
   const [hl, setHl] = useState<[number, number] | null>(null);
-  const [tab, setTab] = useState<"packets" | "flows" | "dns" | "tls" | "http">("packets");
+  const [tab, setTab] = useState<"activity" | "packets" | "flows" | "dns" | "tls" | "http">("activity");
+  const [appSel, setAppSel] = useState<string | null>(null);
   const [wsUrl, setWsUrl] = useState("ws://localhost:9000/capture");
   const [wsStatus, setWsStatus] = useState("disconnected");
   const [msg, setMsg] = useState<string | null>(null);
@@ -64,6 +66,7 @@ export function NetScope() {
       const p = analyzer.current.apply(decodeFrame(f.data, f.ts, nextId.current++, f.linktype ?? 1));
       if (p.dns?.response) p.dns.answers.forEach((a) => { const ip = a.split(" ")[1]; if (ip) hosts.current.set(ip, p.dns!.name); });
       if (p.tls?.sni) hosts.current.set(p.dst, p.tls.sni);
+      annotate(p, (ip) => (isPrivate(ip) ? undefined : hosts.current.get(ip)));
       pkts.current.push(p);
     }
     if (pkts.current.length > MAX) pkts.current.splice(0, pkts.current.length - MAX);
@@ -250,16 +253,17 @@ export function NetScope() {
             {stats.retrans > 0 && <span className="font-mono text-warning">retrans {stats.retrans}</span>}
           </div>
           <nav className="flex gap-1 overflow-x-auto border-b border-border px-2">
-            {(["packets", "flows", "dns", "tls", "http"] as const).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`border-b-2 px-3 py-2 text-xs font-medium uppercase tracking-wide ${tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>{t}</button>
+            {(["activity", "packets", "flows", "dns", "tls", "http"] as const).map((t) => (
+              <button key={t} onClick={() => setTab(t)} className={`border-b-2 px-3 py-2 text-xs font-medium uppercase tracking-wide ${tab === t ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>{t === "activity" ? "Apps & activity" : t}</button>
             ))}
           </nav>
           <div className="min-h-0 flex-1 overflow-auto">
+            {tab === "activity" && <AppsView rows={view} app={appSel} setApp={setAppSel} hostOf={(ip) => hosts.current.get(ip) ?? ip} t0={all[0]?.ts ?? 0} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
             {tab === "packets" && <PacketTable rows={view} selId={selId} onSel={(id) => { setSelId(id); setHl(null); }} t0={all[0]?.ts ?? 0} />}
             {tab === "flows" && <Flows rows={view} />}
-            {tab === "dns" && <Insight rows={view.filter((p) => p.dns)} cols={["Name", "Type", "Kind", "Answers", "Latency"]} cell={(p) => [p.dns!.name, p.dns!.qtype, p.dns!.response ? "response" : "query", p.dns!.answers.join(", "), p.dns!.latencyMs != null ? `${p.dns!.latencyMs.toFixed(1)} ms` : ""]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
-            {tab === "tls" && <Insight rows={view.filter((p) => p.tls && p.tls.type !== "Application Data")} cols={["Message", "SNI / CN", "Version", "Cipher", "Server"]} cell={(p) => [p.tls!.type, p.tls!.sni ?? p.tls!.cert ?? hosts.current.get(p.src) ?? "", p.tls!.version ?? "", p.tls!.cipher ?? (p.tls!.ciphers ? `${p.tls!.ciphers.length} offered` : ""), p.tls!.type === "ClientHello" ? p.dst : p.src]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
-            {tab === "http" && <Insight rows={view.filter((p) => p.http)} cols={["Method / Status", "Host", "Path", "Content-Type", "Version"]} cell={(p) => [p.http!.method ?? String(p.http!.status ?? ""), p.http!.host ?? p.src, p.http!.path ?? "", p.http!.contentType ?? "", p.http!.version]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
+            {tab === "dns" && <Insight rows={view.filter((p) => p.dns)} cols={["App", "Name", "Type", "Kind", "Answers", "Latency"]} cell={(p) => [p.app ?? "", p.dns!.name, p.dns!.qtype, p.dns!.response ? "response" : "query", p.dns!.answers.join(", "), p.dns!.latencyMs != null ? `${p.dns!.latencyMs.toFixed(1)} ms` : ""]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
+            {tab === "tls" && <Insight rows={view.filter((p) => p.tls && p.tls.type !== "Application Data")} cols={["App", "Message", "SNI / CN", "Version", "Cipher", "Server"]} cell={(p) => [p.app ?? "", p.tls!.type, p.tls!.sni ?? p.tls!.cert ?? hosts.current.get(p.src) ?? "", p.tls!.version ?? "", p.tls!.cipher ?? (p.tls!.ciphers ? `${p.tls!.ciphers.length} offered` : ""), p.tls!.type === "ClientHello" ? p.dst : p.src]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
+            {tab === "http" && <Insight rows={view.filter((p) => p.http)} cols={["App", "Method / Status", "Full URL", "Content-Type", "Version"]} cell={(p) => [p.app ?? "", p.http!.method ?? String(p.http!.status ?? ""), p.url ?? p.http!.host ?? p.src, p.http!.contentType ?? "", p.http!.version]} onSel={(id) => { setSelId(id); setTab("packets"); }} />}
           </div>
           {sel && tab === "packets" && (
             <div className="grid max-h-[45%] min-h-48 shrink-0 grid-cols-1 border-t border-border md:grid-cols-2">
@@ -289,10 +293,10 @@ function PacketTable({ rows, selId, onSel, t0 }: { rows: Packet[]; selId: number
     <div ref={ref}>
       <table className="w-full font-mono text-[11px]">
         <thead className="sticky top-0 bg-card text-left text-muted-foreground">
-          <tr>{["No.", "Time", "Source", "Destination", "Proto", "Len", "Info"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">{h}</th>)}</tr>
+          <tr>{["No.", "Time", "Source", "Destination", "Proto", "App", "Len", "Info"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">{h}</th>)}</tr>
         </thead>
         <tbody>
-          {shown.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground"><Activity className="mx-auto mb-2 size-5" />No packets match.</td></tr>}
+          {shown.length === 0 && <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground"><Activity className="mx-auto mb-2 size-5" />No packets match.</td></tr>}
           {shown.map((p) => (
             <tr key={p.id} onClick={() => onSel(p.id)} className={`cursor-pointer border-b border-border/40 ${p.id === selId ? "bg-accent" : p.retrans ? "bg-warning/10" : "hover:bg-muted"}`}>
               <td className="px-2 py-1 text-muted-foreground">{p.id}</td>
@@ -300,6 +304,7 @@ function PacketTable({ rows, selId, onSel, t0 }: { rows: Packet[]; selId: number
               <td className="px-2 py-1 whitespace-nowrap">{p.src}{p.srcPort != null && <span className="text-muted-foreground">:{p.srcPort}</span>}</td>
               <td className="px-2 py-1 whitespace-nowrap">{p.dst}{p.dstPort != null && <span className="text-muted-foreground">:{p.dstPort}</span>}</td>
               <td className={`px-2 py-1 font-medium ${PROTO_CLS[p.proto]}`}>{p.proto}</td>
+              <td className={`whitespace-nowrap px-2 py-1 ${CAT_CLS[p.appCat ?? "Other"]}`}>{p.app}</td>
               <td className="px-2 py-1">{p.length}</td>
               <td className={`max-w-[28rem] truncate px-2 py-1 ${p.retrans ? "text-warning" : ""}`}>{p.info}</td>
             </tr>
@@ -391,4 +396,78 @@ function HexView({ bytes, hl }: { bytes: Uint8Array; hl: [number, number] | null
     );
   }
   return <div className="overflow-auto p-2 font-mono text-[11px] leading-5">{lines}</div>;
+}
+
+const KIND = (p: Packet) => p.http?.method ? "HTTP request" : p.http ? "HTTP response" : p.tls?.type === "ClientHello" ? "HTTPS open" : p.tls ? "TLS" : p.dns ? (p.dns.response ? "DNS answer" : "DNS lookup") : p.proto === "UDP" && (p.dstPort === 443 || p.srcPort === 443) ? "QUIC (UDP)" : p.proto;
+
+/** Groups traffic into one box per app; clicking a box lists every request that app made. */
+function AppsView({ rows, app, setApp, hostOf, t0, onSel }: { rows: Packet[]; app: string | null; setApp: (a: string | null) => void; hostOf: (ip: string) => string; t0: number; onSel: (id: number) => void }) {
+  const apps = useMemo(() => {
+    const m = new Map<string, { name: string; cat: string; pkts: number; bytes: number; first: number; last: number; devices: Set<string>; domains: Map<string, number>; urls: Set<string>; udp: number }>();
+    for (const p of rows) {
+      if (!p.app) continue;
+      let a = m.get(p.app);
+      if (!a) m.set(p.app, (a = { name: p.app, cat: p.appCat ?? "Other", pkts: 0, bytes: 0, first: p.ts, last: p.ts, devices: new Set(), domains: new Map(), urls: new Set(), udp: 0 }));
+      a.pkts++; a.bytes += p.length; a.last = p.ts;
+      const local = isPrivate(p.src) && p.src !== "192.168.1.1" ? p.src : p.dst;
+      if (isPrivate(local) && local !== "192.168.1.1") a.devices.add(local);
+      if (p.domain && !/^\d/.test(p.domain)) a.domains.set(p.domain, (a.domains.get(p.domain) ?? 0) + 1);
+      if (p.http?.method && p.url) a.urls.add(p.url);
+      if (p.proto === "UDP" || p.proto === "DNS") a.udp++;
+    }
+    return [...m.values()].sort((x, y) => y.bytes - x.bytes);
+  }, [rows]);
+
+  const sel = apps.find((a) => a.name === app);
+  if (!sel) {
+    return (
+      <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-3">
+        {apps.length === 0 && <p className="col-span-full py-8 text-center text-sm text-muted-foreground">No app activity yet — press Start.</p>}
+        {apps.map((a) => (
+          <button key={a.name} onClick={() => setApp(a.name)} className="rounded-md border border-border bg-card p-3 text-left transition-colors hover:border-ring/60">
+            <div className="flex items-center gap-2">
+              <Globe className={`size-4 ${CAT_CLS[a.cat]}`} />
+              <span className="truncate text-sm font-medium">{a.name}</span>
+              <span className="ml-auto rounded bg-muted px-1.5 text-[10px] uppercase text-muted-foreground">{a.cat}</span>
+            </div>
+            <div className="mt-1 text-[11px] text-muted-foreground">on {[...a.devices].map(hostOf).join(", ") || "network"}</div>
+            <div className="mt-1.5 flex justify-between font-mono text-[11px]"><span>{fmtBytes(a.bytes)} · {a.pkts} pkts</span><span className="text-muted-foreground">{a.udp} UDP</span></div>
+            <div className="mt-1.5 space-y-0.5 font-mono text-[11px]">
+              {[...a.domains.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([d]) => <div key={d} className="truncate text-primary">{d}</div>)}
+              {[...a.urls].slice(-2).map((u) => <div key={u} className="truncate text-p-http">{u}</div>)}
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  }
+  const reqs = rows.filter((p) => p.app === sel.name && (p.http || p.dns || p.tls?.type === "ClientHello" || p.tls?.type === "Certificate" || p.proto === "UDP" || p.proto === "ARP" || p.proto === "ICMP"));
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2 text-xs">
+        <button onClick={() => setApp(null)} className="inline-flex items-center gap-1 text-primary"><ChevronLeft className="size-4" /> All apps</button>
+        <span className="font-medium">{sel.name}</span>
+        <span className="text-muted-foreground">{reqs.length} requests · {sel.domains.size} domains · {fmtBytes(sel.bytes)}</span>
+      </div>
+      <table className="w-full font-mono text-[11px]">
+        <thead className="sticky top-0 bg-card text-left text-muted-foreground"><tr>{["Time", "Device", "Type", "Full URL / domain", "What happened", "Len"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">{h}</th>)}</tr></thead>
+        <tbody>
+          {reqs.slice(-500).reverse().map((p) => {
+            const local = isPrivate(p.src) && p.src !== "192.168.1.1" ? p.src : p.dst;
+            return (
+              <tr key={p.id} onClick={() => onSel(p.id)} className="cursor-pointer border-b border-border/40 hover:bg-muted">
+                <td className="whitespace-nowrap px-2 py-1">{((p.ts - t0) / 1000).toFixed(2)}s</td>
+                <td className="whitespace-nowrap px-2 py-1">{hostOf(local)}</td>
+                <td className={`whitespace-nowrap px-2 py-1 ${PROTO_CLS[p.proto]}`}>{KIND(p)}</td>
+                <td className="max-w-[26rem] truncate px-2 py-1 text-primary">{p.url ?? p.domain ?? p.dst}</td>
+                <td className="max-w-[24rem] truncate px-2 py-1 text-muted-foreground">{p.http?.status ? `${p.http.status} ${p.http.contentType ?? ""}` : p.action}</td>
+                <td className="px-2 py-1">{p.length}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="p-2 text-center text-[11px] text-muted-foreground">Full paths are visible only for unencrypted HTTP. For HTTPS and QUIC, the address bar path is encrypted — only the site name is shown.</p>
+    </div>
+  );
 }
