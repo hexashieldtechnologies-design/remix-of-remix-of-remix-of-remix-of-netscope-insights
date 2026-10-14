@@ -21,3 +21,4 @@
 - Electron (`electron/main.cjs`) loads a URL from `NETSCOPE_URL` (default http://localhost:8080) rather than bundling the app; packaging scripts are in package.json.
 - The agent download is generated in-browser from the bundled script (`?raw` import + Blob) because direct links to the file fail behind the preview access gate. The agent also sends JSON text frames `{type:"devices", devices:[...]}` from its Wi-Fi scan (stdlib UDP poke + OS ARP table), which the UI merges into the device list.
 - Packet "Analyze" explanations are rule-based in `src/lib/netscope/explain.ts` (no server/AI).
+- Remote sessions: the agent pushes batches over HTTPS to `/api/public/relay` (room code = shared secret, rows in `relay_frames`, auto-pruned after 15 min) and the browser polls the same route. Outbound-only so it works across NAT without port forwarding; Workers cannot hold WebSockets without Durable Objects.
