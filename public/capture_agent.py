@@ -26,6 +26,9 @@ import sys
 import threading
 import time
 
+# Filled in automatically when downloaded from NetScope (remote session relay host).
+DEFAULT_SERVER = "__NETSCOPE_SERVER__"
+
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # ---------------------------------------------------------------- WebSocket hub
