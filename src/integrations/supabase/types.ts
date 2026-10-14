@@ -14,7 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      relay_frames: {
+        Row: {
+          created_at: string
+          id: number
+          kind: string
+          payload: string
+          room: string
+          ts: number | null
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          kind?: string
+          payload: string
+          room: string
+          ts?: number | null
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          kind?: string
+          payload?: string
+          room?: string
+          ts?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
