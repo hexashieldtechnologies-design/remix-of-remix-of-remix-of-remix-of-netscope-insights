@@ -8,13 +8,20 @@ import { scenario, SIM_DEVICES } from "@/lib/netscope/simulator";
 import { explainPacket } from "@/lib/netscope/explain";
 import agentSource from "../../../public/capture_agent.py?raw";
 
+const agentScript = () => agentSource.replace("__NETSCOPE_SERVER__", window.location.origin);
 function downloadAgent() {
-  const url = URL.createObjectURL(new Blob([agentSource], { type: "text/x-python;charset=utf-8" }));
+  const url = URL.createObjectURL(new Blob([agentScript()], { type: "text/x-python;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url; a.download = "capture_agent.py";
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
+const newRoom = () => {
+  const c = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const r = crypto.getRandomValues(new Uint8Array(10));
+  const s = Array.from(r, (b) => c[b % c.length]).join("");
+  return `NET-${s.slice(0, 5)}-${s.slice(5)}`;
+};
 
 const MAX = 20000;
 const PROTO_CLS: Record<Proto, string> = {
@@ -24,7 +31,7 @@ const PROTO_CLS: Record<Proto, string> = {
 const OUI: Record<string, string> = { "3c:22:fb": "Apple", "a4:83:e7": "Apple", "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "00:1a:11": "Google", "f4:f2:6d": "TP-Link", "50:02:91": "Espressif", "24:0a:c4": "Espressif", "d8:bb:c1": "Micro-Star", "00:50:56": "VMware", "08:00:27": "VirtualBox", "00:0c:29": "VMware" };
 const isPrivate = (ip: string) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fe80|fd)/.test(ip);
 const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`);
-const IFACES = ["sim0 — Live simulator", "ws0 — Live capture (agent)", "file — PCAP import"];
+const IFACES = ["sim0 — Live simulator", "ws0 — Live capture (agent)", "relay — Remote session (internet)", "file — PCAP import"];
 
 interface Device { ip: string; mac?: string; host?: string; vendor?: string; pkts: number; bytesIn: number; bytesOut: number; protos: Set<Proto>; last: number; peers: Set<string>; discovered?: boolean; gateway?: boolean; self?: boolean }
 
@@ -130,6 +137,42 @@ export function NetScope() {
     return () => ws.close();
   }, [state, iface, wsUrl, ingest]);
 
+  // Remote session: poll the cloud relay for frames pushed by an agent anywhere on the internet
+  const [room, setRoom] = useState("");
+  const [relayStatus, setRelayStatus] = useState("idle");
+  useEffect(() => {
+    let r = localStorage.getItem("netscope-room");
+    if (!r) { r = newRoom(); localStorage.setItem("netscope-room", r); }
+    setRoom(r);
+  }, []);
+  useEffect(() => {
+    if (state !== "running" || !iface.startsWith("relay") || !room) return;
+    let after = 0, stop = false, idle = 0;
+    setRelayStatus("waiting for agent…");
+    const tick = async () => {
+      if (stop) return;
+      try {
+        const res = await fetch(`/api/public/relay?room=${encodeURIComponent(room)}&after=${after}`, { cache: "no-store" });
+        const j = await res.json();
+        const items = j.items ?? [];
+        const frames: { data: Uint8Array; ts: number }[] = [];
+        for (const it of items) {
+          after = Math.max(after, it.id);
+          if (it.kind === "devices") {
+            try { const d = JSON.parse(it.payload); for (const x of d.devices ?? []) { lan.current.set(x.ip, x); if (x.name) hosts.current.set(x.ip, x.name); } } catch { /* skip */ }
+          } else frames.push({ data: Uint8Array.from(atob(it.payload), (c) => c.charCodeAt(0)), ts: it.ts ?? Date.now() });
+        }
+        if (frames.length) ingest(frames); else if (items.length) setVer((v) => v + 1);
+        idle = items.length ? 0 : idle + 1;
+        setRelayStatus(items.length ? "receiving" : idle > 10 ? "connected — no data yet" : "listening");
+      } catch { setRelayStatus("relay error, retrying"); }
+      if (!stop) setTimeout(tick, 700);
+    };
+    tick();
+    return () => { stop = true; };
+  }, [state, iface, room, ingest]);
+  const remoteCmd = `sudo python3 capture_agent.py --room ${room}`;
+
   const clear = () => { pkts.current = []; lan.current = new Map(); analyzer.current = new Analyzer(); nextId.current = 1; setSelId(null); setDevice(null); setVer((v) => v + 1); };
 
   const onFile = async (f: File) => {
@@ -212,6 +255,15 @@ export function NetScope() {
             <span className="font-mono text-xs text-muted-foreground">{wsStatus}</span>
           </div>
         )}
+        {iface.startsWith("relay") && (
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <Globe className="size-4 text-muted-foreground" />
+            <span className="rounded bg-muted px-2 py-1 text-primary">{room}</span>
+            <button className="rounded border border-border px-2 py-1" onClick={() => navigator.clipboard.writeText(remoteCmd)}>Copy command</button>
+            <button className="rounded border border-border px-2 py-1" onClick={() => { const r = newRoom(); localStorage.setItem("netscope-room", r); setRoom(r); }}>New code</button>
+            <span className="text-muted-foreground">{relayStatus}</span>
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-2 font-mono text-xs">
           <span className={`inline-flex items-center gap-1 rounded px-2 py-1 ${state === "running" ? "bg-accent text-primary" : "bg-muted text-muted-foreground"}`}>
             <Radio className={`size-3 ${state === "running" ? "animate-pulse" : ""}`} /> {state.toUpperCase()}
@@ -239,7 +291,7 @@ export function NetScope() {
             <ol className="mt-3 space-y-3 text-sm">
               <li>
                 <p className="font-medium">1. Download the script</p>
-                <div className="mt-1 flex flex-wrap gap-2"><button onClick={downloadAgent} className="inline-flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"><Terminal className="size-3" /> Download capture_agent.py</button><button onClick={async () => { await navigator.clipboard.writeText(agentSource); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="rounded border border-border px-3 py-1.5 text-xs">{copied ? "Copied!" : "Copy script"}</button></div>
+                <div className="mt-1 flex flex-wrap gap-2"><button onClick={downloadAgent} className="inline-flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"><Terminal className="size-3" /> Download capture_agent.py</button><button onClick={async () => { await navigator.clipboard.writeText(agentScript()); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="rounded border border-border px-3 py-1.5 text-xs">{copied ? "Copied!" : "Copy script"}</button></div>
               </li>
               <li>
                 <p className="font-medium">2. Run it in a terminal (admin rights needed to see traffic)</p>
@@ -250,6 +302,12 @@ export function NetScope() {
               <li>
                 <p className="font-medium">3. Connect from NetScope</p>
                 <p className="mt-1 text-xs text-muted-foreground">Pick <span className="font-mono">ws0 — Live capture (agent)</span> above and press Start. On this PC the app connects to <span className="font-mono">ws://localhost:9000</span>; from a phone on the same Wi-Fi use the LAN address the script prints (e.g. <span className="font-mono">ws://192.168.1.5:9000</span>).</p>
+              </li>
+              <li className="rounded border border-primary/40 bg-background p-3">
+                <p className="font-medium">Remote session — friend in another city</p>
+                <p className="mt-1 text-xs text-muted-foreground">Send them the downloaded script. They run this one command; their packets and Wi-Fi devices stream here over the internet (no router setup). Pick <span className="font-mono">relay — Remote session</span> above and press Start.</p>
+                <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 font-mono text-xs">{remoteCmd}</pre>
+                <p className="mt-1 text-xs text-muted-foreground">Keep the code private — anyone with it can watch the stream. Works once the app is published.</p>
               </li>
             </ol>
             <div className="mt-4 rounded border border-border bg-background p-3">

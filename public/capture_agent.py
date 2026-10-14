@@ -26,6 +26,9 @@ import sys
 import threading
 import time
 
+# Filled in automatically when downloaded from NetScope (remote session relay host).
+DEFAULT_SERVER = "__NETSCOPE_SERVER__"
+
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # ---------------------------------------------------------------- WebSocket hub
@@ -60,13 +63,18 @@ class Hub:
             return len(self.clients)
 
     def broadcast(self, data: bytes, op: int = 0x82):
+        if self.remote:
+            self.remote.push(data, op)
+            if op == 0x82:
+                self.sent += 1
+                self.bytes += len(data)
         frame = ws_frame(data, op)
         dead = []
         with self.lock:
             for c in self.clients:
                 try:
                     c.sendall(frame)
-                    if op == 0x82:
+                    if op == 0x82 and not self.remote:
                         self.sent += 1
                         self.bytes += len(data)
                 except OSError:
@@ -74,8 +82,52 @@ class Hub:
             for c in dead:
                 self.clients.discard(c)
 
+    remote = None
+
     def send_text(self, text: str):
         self.broadcast(text.encode(), 0x81)
+
+
+class Remote:
+    """Pushes frames over HTTPS to the NetScope cloud relay so a browser anywhere can watch.
+    Outbound-only: works behind any home router / mobile network, no port forwarding."""
+
+    def __init__(self, server, room):
+        self.url = server.rstrip("/") + "/api/public/relay"
+        self.room = room
+        self.q = []
+        self.lock = threading.Lock()
+        self.ok = 0
+        self.fail = 0
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def push(self, data, op):
+        item = {"kind": "frame", "payload": base64.b64encode(data).decode(), "ts": time.time() * 1000}
+        if op == 0x81:
+            item = {"kind": "devices", "payload": data.decode(), "ts": time.time() * 1000}
+        with self.lock:
+            if len(self.q) < 20000:
+                self.q.append(item)
+
+    def loop(self):
+        import urllib.request
+        while True:
+            time.sleep(0.5)
+            with self.lock:
+                batch, self.q = self.q[:400], self.q[400:]
+            if not batch:
+                continue
+            body = json.dumps({"room": self.room, "items": batch}).encode()
+            req = urllib.request.Request(self.url, data=body, headers={"Content-Type": "application/json", "User-Agent": "NetScopeAgent/1.0"})
+            try:
+                urllib.request.urlopen(req, timeout=15).read()
+                self.ok += len(batch)
+            except Exception as e:  # noqa
+                self.fail += 1
+                if self.fail % 10 == 1:
+                    print(f"[!] Relay upload failed ({e}); retrying…")
+                with self.lock:
+                    self.q = batch + self.q
 
 
 def handle_client(conn, addr, hub):
@@ -352,9 +404,13 @@ def main():
     ap.add_argument("--scapy", action="store_true", help="force the Scapy capture backend")
     ap.add_argument("--test", action="store_true", help="send demo frames instead of capturing")
     ap.add_argument("--no-scan", action="store_true", help="disable Wi-Fi device discovery")
+    ap.add_argument("--room", default=None, help="remote session code shown in NetScope (stream over the internet)")
+    ap.add_argument("--server", default=DEFAULT_SERVER, help="NetScope app URL for remote sessions")
     args = ap.parse_args()
 
     hub = Hub()
+    if args.room:
+        hub.remote = Remote(args.server, args.room.strip().upper())
     threading.Thread(target=ws_server, args=(args.port, hub), daemon=True).start()
     threading.Thread(target=stats_loop, args=(hub,), daemon=True).start()
     if not args.no_scan:
@@ -369,6 +425,10 @@ def main():
 
     print("=" * 64)
     print("  NetScope Capture Agent")
+    if args.room:
+        print(f"  REMOTE session:         {args.room.strip().upper()}")
+        print(f"  Streaming to:           {args.server}")
+        print("  The NetScope window with this code will start showing packets.")
     print(f"  URL for this PC:        ws://localhost:{args.port}")
     print(f"  URL for phones on LAN:  ws://{lan}:{args.port}")
     print("  In NetScope: pick 'ws0 — Live capture (agent)' -> Start")
