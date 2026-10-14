@@ -137,6 +137,42 @@ export function NetScope() {
     return () => ws.close();
   }, [state, iface, wsUrl, ingest]);
 
+  // Remote session: poll the cloud relay for frames pushed by an agent anywhere on the internet
+  const [room, setRoom] = useState("");
+  const [relayStatus, setRelayStatus] = useState("idle");
+  useEffect(() => {
+    let r = localStorage.getItem("netscope-room");
+    if (!r) { r = newRoom(); localStorage.setItem("netscope-room", r); }
+    setRoom(r);
+  }, []);
+  useEffect(() => {
+    if (state !== "running" || !iface.startsWith("relay") || !room) return;
+    let after = 0, stop = false, idle = 0;
+    setRelayStatus("waiting for agent…");
+    const tick = async () => {
+      if (stop) return;
+      try {
+        const res = await fetch(`/api/public/relay?room=${encodeURIComponent(room)}&after=${after}`, { cache: "no-store" });
+        const j = await res.json();
+        const items = j.items ?? [];
+        const frames: { data: Uint8Array; ts: number }[] = [];
+        for (const it of items) {
+          after = Math.max(after, it.id);
+          if (it.kind === "devices") {
+            try { const d = JSON.parse(it.payload); for (const x of d.devices ?? []) { lan.current.set(x.ip, x); if (x.name) hosts.current.set(x.ip, x.name); } } catch { /* skip */ }
+          } else frames.push({ data: Uint8Array.from(atob(it.payload), (c) => c.charCodeAt(0)), ts: it.ts ?? Date.now() });
+        }
+        if (frames.length) ingest(frames); else if (items.length) setVer((v) => v + 1);
+        idle = items.length ? 0 : idle + 1;
+        setRelayStatus(items.length ? "receiving" : idle > 10 ? "connected — no data yet" : "listening");
+      } catch { setRelayStatus("relay error, retrying"); }
+      if (!stop) setTimeout(tick, 700);
+    };
+    tick();
+    return () => { stop = true; };
+  }, [state, iface, room, ingest]);
+  const remoteCmd = `sudo python3 capture_agent.py --room ${room}`;
+
   const clear = () => { pkts.current = []; lan.current = new Map(); analyzer.current = new Analyzer(); nextId.current = 1; setSelId(null); setDevice(null); setVer((v) => v + 1); };
 
   const onFile = async (f: File) => {
@@ -217,6 +253,15 @@ export function NetScope() {
             <Plug className="size-4 text-muted-foreground" />
             <input value={wsUrl} onChange={(e) => setWsUrl(e.target.value)} className="h-8 w-56 rounded border border-input bg-background px-2 font-mono text-xs" aria-label="WebSocket URL" />
             <span className="font-mono text-xs text-muted-foreground">{wsStatus}</span>
+          </div>
+        )}
+        {iface.startsWith("relay") && (
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <Globe className="size-4 text-muted-foreground" />
+            <span className="rounded bg-muted px-2 py-1 text-primary">{room}</span>
+            <button className="rounded border border-border px-2 py-1" onClick={() => navigator.clipboard.writeText(remoteCmd)}>Copy command</button>
+            <button className="rounded border border-border px-2 py-1" onClick={() => { const r = newRoom(); localStorage.setItem("netscope-room", r); setRoom(r); }}>New code</button>
+            <span className="text-muted-foreground">{relayStatus}</span>
           </div>
         )}
         <div className="ml-auto flex items-center gap-2 font-mono text-xs">
