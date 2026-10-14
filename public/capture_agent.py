@@ -240,6 +240,7 @@ def discovery_loop(hub, interval=15):
         time.sleep(1)
         arp = read_arp()
         found = {ip: mac for ip, mac in arp.items() if ip.startswith(prefix + ".")}
+        KNOWN_DEVICES.update(found)
         with ThreadPoolExecutor(max_workers=16) as ex:
             for ip, n in zip(list(found), ex.map(lambda i: names.get(i) or reverse_name(i), list(found))):
                 if n:
