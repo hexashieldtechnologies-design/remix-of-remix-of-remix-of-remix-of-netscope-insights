@@ -252,7 +252,15 @@ export function NetScope() {
                 <p className="mt-1 text-xs text-muted-foreground">Pick <span className="font-mono">ws0 — Live capture (agent)</span> above and press Start. On this PC the app connects to <span className="font-mono">ws://localhost:9000</span>; from a phone on the same Wi-Fi use the LAN address the script prints (e.g. <span className="font-mono">ws://192.168.1.5:9000</span>).</p>
               </li>
             </ol>
-            <p className="mt-3 text-xs text-muted-foreground">The agent also scans your Wi-Fi and lists every connected device (phones, TVs, router). Your laptop can only see the full traffic of other devices if the router mirrors it; otherwise you see their presence plus broadcast traffic.</p>
+            <div className="mt-4 rounded border border-border bg-background p-3">
+              <p className="text-sm font-medium">See every device's traffic, not just this one</p>
+              <p className="mt-1 text-xs text-muted-foreground">The agent now captures in promiscuous mode and keeps probing every device it finds on your Wi-Fi, so all phones, TVs and the router show up as live cards. Wi-Fi encrypts each device's private data separately, so to see their <em>full</em> traffic one of these is needed:</p>
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <li><span className="font-medium text-foreground">Easiest:</span> turn on your laptop's Mobile Hotspot and connect phones/TV to it — your laptop becomes the router, so you see 100% of their traffic.</li>
+                <li><span className="font-medium text-foreground">Router mirroring:</span> enable port mirroring / SPAN on your router toward this laptop.</li>
+                <li><span className="font-medium text-foreground">On the gateway:</span> run this same script on a Linux router, OpenWrt box or Raspberry Pi that all traffic passes through.</li>
+              </ul>
+            </div>
             <p className="mt-2 text-xs text-muted-foreground">Tip: HTTPS hides page paths and contents — you still see every site your devices contact, plus ports, protocols and sizes.</p>
           </div>
         </div>
