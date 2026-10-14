@@ -19,3 +19,5 @@
 - The four core byte-parsing files (`src/lib/netscope/*`, `NetScope.tsx`) use `// @ts-nocheck`: per-byte index access fights the strict noUncheckedIndexedAccess config. Revisit if the config loosens; do not add more ts-nocheck files.
 - PWA: manifest + icons exist; there is intentionally NO service worker yet (added later — see roadmap).
 - Electron (`electron/main.cjs`) loads a URL from `NETSCOPE_URL` (default http://localhost:8080) rather than bundling the app; packaging scripts are in package.json.
+- The agent download is generated in-browser from the bundled script (`?raw` import + Blob) because direct links to the file fail behind the preview access gate. The agent also sends JSON text frames `{type:"devices", devices:[...]}` from its Wi-Fi scan (stdlib UDP poke + OS ARP table), which the UI merges into the device list.
+- Packet "Analyze" explanations are rule-based in `src/lib/netscope/explain.ts` (no server/AI).
