@@ -359,6 +359,7 @@ def main():
     threading.Thread(target=stats_loop, args=(hub,), daemon=True).start()
     if not args.no_scan:
         threading.Thread(target=discovery_loop, args=(hub,), daemon=True).start()
+        threading.Thread(target=probe_loop, args=(hub,), daemon=True).start()
 
     try:
         ips = socket.gethostbyname_ex(socket.gethostname())[2]
