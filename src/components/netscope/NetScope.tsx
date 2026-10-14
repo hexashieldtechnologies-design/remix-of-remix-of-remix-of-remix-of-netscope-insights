@@ -26,7 +26,7 @@ const isPrivate = (ip: string) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|f
 const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`);
 const IFACES = ["sim0 — Live simulator", "ws0 — Live capture (agent)", "file — PCAP import"];
 
-interface Device { ip: string; mac?: string; host?: string; vendor?: string; pkts: number; bytesIn: number; bytesOut: number; protos: Set<Proto>; last: number; peers: Set<string> }
+interface Device { ip: string; mac?: string; host?: string; vendor?: string; pkts: number; bytesIn: number; bytesOut: number; protos: Set<Proto>; last: number; peers: Set<string>; discovered?: boolean; gateway?: boolean; self?: boolean }
 
 function deviceIcon(d: Device) {
   const v = `${d.vendor} ${d.host}`.toLowerCase();
